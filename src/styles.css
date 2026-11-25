@@ -1,0 +1,522 @@
+:root {
+  --sheet-bg: #f2f2f7;
+  --card-bg: #ffffff;
+  --text: #1c1c1e;
+  --text-secondary: #6e6e73;
+  --border: rgba(0, 0, 0, 0.08);
+  --chip-bg: rgba(0, 0, 0, 0.05);
+  --accent: #5b6cff;
+  --danger: #e5484d;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 4px 12px rgba(0, 0, 0, 0.06);
+
+  /* 每种类型一个识别色 */
+  --c-text: #64748b;
+  --c-url: #3b82f6;
+  --c-email: #0ea5e9;
+  --c-color: #ec4899;
+  --c-path: #d97706;
+  --c-html: #f97316;
+  --c-rtf: #a855f7;
+  --c-image: #16a34a;
+  --c-files: #ca8a04;
+
+  color-scheme: light dark;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font-size: 13px;
+  color: var(--text);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sheet-bg: #1c1c1e;
+    --card-bg: #2c2c2e;
+    --text: #f2f2f7;
+    --text-secondary: #98989f;
+    --border: rgba(255, 255, 255, 0.08);
+    --chip-bg: rgba(255, 255, 255, 0.07);
+    --accent: #7c8aff;
+    --danger: #ff6369;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 12px rgba(0, 0, 0, 0.25);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* 窗口本身透明，只有 .sheet 有底色，顶部圆角才能透出来 */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+body {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+.sheet {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--sheet-bg);
+  border-top: 1px solid var(--border);
+  border-radius: 16px 16px 0 0;
+}
+
+/* ---------- 顶栏 ---------- */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 20px 10px;
+}
+
+.filters {
+  display: flex;
+  gap: 6px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 14px;
+  background: var(--chip-bg);
+  color: var(--text-secondary);
+  transition: background 0.15s, color 0.15s;
+}
+
+.chip:hover {
+  color: var(--text);
+}
+
+.chip.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.chip-count {
+  font-size: 11px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.toolbar-end {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.menu-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px 0 12px;
+  border-radius: 14px;
+  background: var(--chip-bg);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  transition: color 0.15s;
+}
+
+.menu-button:hover {
+  color: var(--text);
+}
+
+.menu-button .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.hints {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+kbd {
+  min-width: 20px;
+  padding: 1px 5px;
+  margin-left: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--card-bg);
+  font-family: inherit;
+  font-size: 11px;
+  text-align: center;
+}
+
+kbd + kbd {
+  margin-left: 0;
+}
+
+/* ---------- 横向列表（虚拟化：卡片在 .track 里按下标绝对定位，尺寸与 App.tsx 常量一致） ---------- */
+
+.list {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.track {
+  position: relative;
+  flex: none;
+  height: 100%;
+}
+
+.list::-webkit-scrollbar {
+  display: none;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: auto;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.empty small {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* ---------- 卡片 ---------- */
+
+.card {
+  --type: var(--c-text);
+
+  position: absolute;
+  top: 6px;
+  bottom: 20px;
+  width: 236px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.card.selected {
+  border-color: transparent;
+  box-shadow: 0 0 0 2.5px var(--accent), var(--shadow);
+  transform: translateY(-2px);
+}
+
+.type-url { --type: var(--c-url); }
+.type-email { --type: var(--c-email); }
+.type-color { --type: var(--c-color); }
+.type-path { --type: var(--c-path); }
+.type-html { --type: var(--c-html); }
+.type-rtf { --type: var(--c-rtf); }
+.type-image { --type: var(--c-image); }
+.type-files { --type: var(--c-files); }
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  background: color-mix(in srgb, var(--type) 12%, transparent);
+}
+
+.card-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--type);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.card-time {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.card-delete {
+  display: none;
+  width: 18px;
+  height: 18px;
+  margin-right: -4px;
+  border-radius: 9px;
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 18px;
+}
+
+.card:hover .card-delete {
+  display: block;
+}
+
+.card:hover .card-time {
+  display: none;
+}
+
+.card-delete:hover {
+  background: var(--chip-bg);
+  color: var(--text);
+}
+
+/* 内容在卡片里居中；长文本例外，见 .card-text */
+.card-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 10px 12px;
+  overflow: hidden;
+}
+
+.card-foot {
+  padding: 0 12px 10px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+/* 文本：长段落仍从左上角开始排（居中的长段落很难读，溢出时还会把首行裁掉） */
+.card-text {
+  display: -webkit-box;
+  align-self: stretch;
+  margin: 0 0 auto;
+  overflow: hidden;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  -webkit-line-clamp: 11;
+  -webkit-box-orient: vertical;
+}
+
+.card-text.short {
+  align-self: center;
+  margin: 0;
+  font-size: 15px;
+  text-align: center;
+}
+
+/* 链接 */
+.card-url {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  text-align: center;
+  word-break: break-all;
+}
+
+.card-url strong {
+  font-size: 15px;
+}
+
+.card-url span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--c-url);
+  line-height: 1.45;
+  -webkit-line-clamp: 8;
+  -webkit-box-orient: vertical;
+}
+
+/* 颜色 */
+.card-color {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  height: 100%;
+}
+
+.card-swatch {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.card-color code {
+  font-size: 13px;
+  text-align: center;
+  word-break: break-all;
+}
+
+/* 图片：透明区域用棋盘格衬底 */
+.card-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  object-fit: contain;
+  background: repeating-conic-gradient(var(--chip-bg) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px;
+}
+
+/* 文件 */
+/* 文件列表整体居中，列表内各行仍左对齐 */
+.card-files {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card-files li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.card-files li .icon {
+  color: var(--c-files);
+}
+
+.card-files li span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-files-more {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+/* ---------- 修改快捷键窗口 ---------- */
+
+html[data-view="shortcut"] body {
+  background: var(--sheet-bg);
+}
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  padding: 18px 22px 18px;
+}
+
+.settings-label {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.recorder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 78px;
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-bg);
+  transition: border-color 0.15s;
+}
+
+.recorder kbd {
+  min-width: 42px;
+  height: 42px;
+  margin: 0;
+  padding: 0 10px;
+  border-radius: 8px;
+  box-shadow: 0 1px 0 var(--border), var(--shadow);
+  font-size: 20px;
+  line-height: 40px;
+}
+
+.recorder.recording {
+  border-color: var(--accent);
+}
+
+.recorder.invalid {
+  border-color: var(--danger);
+}
+
+.settings-hint {
+  min-height: 32px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.settings-hint.error {
+  color: var(--danger);
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.btn {
+  height: 28px;
+  padding: 0 16px;
+  border-radius: 7px;
+  background: var(--chip-bg);
+}
+
+.btn.primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.btn-link {
+  padding: 0;
+  color: var(--accent);
+  font-size: 12px;
+}

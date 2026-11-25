@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44">
+  <!-- 菜单栏模板图标：只用黑色 + 透明度，系统会按深浅色自动反色 -->
+  <g transform="translate(-0.5 -1.5)" fill="none" stroke="#000" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M14 33 V11 H21 A7 7 0 0 1 21 25 H14" stroke-opacity="0.38" transform="translate(3.5 3.5)"/>
+    <path d="M14 33 V11 H21 A7 7 0 0 1 21 25 H14"/>
+  </g>
+</svg>

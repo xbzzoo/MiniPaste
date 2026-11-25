@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#6d7bff"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.2"/>
+      <stop offset="0.55" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="drop" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000" flood-opacity="0.28"/>
+    </filter>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#2e1065" flood-opacity="0.3"/>
+    </filter>
+    <path id="p" d="M338 713 V243 H468 A150 150 0 0 1 468 543 H338" fill="none"
+          stroke-width="112" stroke-linecap="round" stroke-linejoin="round"/>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)" filter="url(#drop)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#gloss)"/>
+  <!-- 两层错位的淡色 P：一叠历史记录 -->
+  <use href="#p" stroke="#ffffff" stroke-opacity="0.14" transform="translate(68 68)"/>
+  <use href="#p" stroke="#ffffff" stroke-opacity="0.32" transform="translate(34 34)"/>
+  <use href="#p" stroke="#ffffff" filter="url(#soft)"/>
+</svg>

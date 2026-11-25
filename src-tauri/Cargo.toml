@@ -1,0 +1,40 @@
+[package]
+name = "mini-paste"
+version = "0.1.0"
+description = "精简版剪贴板工具：记录历史 + 类型识别 + 底部面板"
+edition = "2021"
+
+[lib]
+name = "mini_paste_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api", "protocol-asset", "tray-icon", "image-png"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-log = "2"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+tokio = { version = "1", features = ["time"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
+clipboard-rs = "0.3"
+blake3 = "1"
+regex = "1"
+uuid = { version = "1", features = ["v4"] }
+
+# 仅支持 macOS：底部面板依赖 NSPanel，自动粘贴依赖 CGEvent
+tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString"] }
+objc2-app-kit = { version = "0.3", features = ["NSPasteboard", "NSSound", "NSAlert", "NSButton", "NSApplication"] }
+objc2-service-management = { version = "0.3", features = ["SMAppService"] }
+core-graphics = "0.25"
+core-foundation = "0.10"
+
+[dev-dependencies]
+# 测试里生成 PNG；clipboard-rs 已经依赖它，不会多下载
+image = { version = "0.25", default-features = false, features = ["png"] }

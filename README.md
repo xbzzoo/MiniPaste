@@ -10,13 +10,19 @@ macOS 菜单栏剪贴板工具：自动记录复制过的内容，按 `⇧⌘V` 
 - 查看占用空间，按时间清理历史
 - 修改快捷键、开机自动启动、隐藏菜单栏图标
 
-## 运行
+## 安装
+
+支持 Apple 芯片和 Intel，macOS 11 及以上。终端运行：
 
 ```bash
-npm install
-npm run tauri dev     # 开发
-npm run build:app     # 打包，产物在 src-tauri/target/release/bundle/macos
+curl -fsSL https://raw.githubusercontent.com/xbzzoo/MiniPaste/main/scripts/install-macos.sh | bash
 ```
+
+装到 `/Applications` 并自动打开；再运行一次就是更新到最新版，历史、设置和辅助功能授权都保留。
+
+也可以在 [Releases](https://github.com/xbzzoo/MiniPaste/releases) 下载 `MiniPaste.zip` 手动安装。App 未经 Apple 公证，这样下载的第一次打开会被拦下，到「系统设置 → 隐私与安全性」点「仍要打开」即可。
+
+从源码安装：`npm install && npm run install:app`。
 
 ## 使用
 
@@ -45,7 +51,9 @@ npm run build:app     # 打包，产物在 src-tauri/target/release/bundle/macos
 
 ## 开发
 
-- `npm run build:app` 会用本机自签名证书签名（`scripts/sign-macos.sh`），重新打包后辅助功能授权不会失效
+- `npm run tauri dev`：开发运行
+- `npm run build:app`：只打包不安装，产物在 `src-tauri/target/release/bundle/macos`；会用本机自签名证书签名（`scripts/sign-macos.sh`），重新打包后辅助功能授权不会失效
+- `npm run release`：发布新版本到 GitHub Release（先改 `tauri.conf.json` 里的版本号）。必须用同一张签名证书，否则用户更新后要重新授权辅助功能
 - 测试：`cd src-tauri && cargo test`
 - 图标源文件在 `assets/`
 

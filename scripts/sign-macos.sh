@@ -21,7 +21,7 @@ IDENTITY="MiniPaste Local Signing"
 # 必须用系统自带的 LibreSSL：Homebrew 的 OpenSSL 3+ 导出的 p12 用了新 MAC 算法，macOS 导入不了
 OPENSSL=/usr/bin/openssl
 
-[ -d "$APP" ] || { echo "找不到 $APP，先运行 npm run tauri build -- --bundles app" >&2; exit 1; }
+[ -d "$APP" ] || { echo "找不到 ${APP}，先运行 npm run tauri build -- --bundles app" >&2; exit 1; }
 
 if [ ! -f "$KEYCHAIN" ]; then
   echo "首次运行：生成本机自签名代码签名证书 → $KEYCHAIN"

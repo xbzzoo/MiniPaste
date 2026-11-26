@@ -8,7 +8,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "tauri": "tauri",
-    "build:app": "tauri build --bundles app && bash scripts/sign-macos.sh"
+    "build:app": "tauri build --bundles app && bash scripts/sign-macos.sh",
+    "install:app": "npm run build:app && bash scripts/install-macos.sh src-tauri/target/release/bundle/macos/MiniPaste.app",
+    "release": "bash scripts/release-macos.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.5",

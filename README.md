@@ -63,3 +63,7 @@ src-tauri/src/
   config.rs     配置读写
 src/            前端（React）
 ```
+
+## 许可证
+
+[MIT](LICENSE)

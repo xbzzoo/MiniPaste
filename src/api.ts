@@ -13,7 +13,7 @@ export interface Item {
   id: string;
   kind: Kind;
   subKind: SubKind | null;
-  /** text：前 400 个字符；files：换行分隔的全部路径 */
+  /** text：前 400 个字符（搜索时可能是命中处附近的一段）；files：换行分隔的全部路径 */
   preview: string;
   /** text：字符数；files：文件个数 */
   charCount: number;
@@ -43,9 +43,19 @@ export const EVENTS = {
   settings: "settings://changed",
 } as const;
 
-export const listItems = (filter: Filter, cursor: Cursor | null, limit: number) =>
-  invoke<Item[]>("list_items", { filter, cursor, limit });
-export const getOverview = () => invoke<Overview>("get_overview");
+/**
+ * query 为搜索框文字，空串即不搜。搜索时不受显示范围限制、不含图片；
+ * 长文本的 preview 会换成命中处附近的一段（以「…」开头）
+ */
+export const listItems = (
+  filter: Filter,
+  query: string,
+  cursor: Cursor | null,
+  limit: number,
+) => invoke<Item[]>("list_items", { filter, query, cursor, limit });
+/** 搜索时 counts 是全部记录里命中的条数 */
+export const getOverview = (query: string) =>
+  invoke<Overview>("get_overview", { query });
 export const pasteItem = (id: string) => invoke<void>("paste_item", { id });
 export const deleteItem = (id: string) => invoke<void>("delete_item", { id });
 export const hidePanel = () => invoke<void>("hide_panel");

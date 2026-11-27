@@ -1,6 +1,6 @@
 [package]
 name = "mini-paste"
-version = "0.1.0"
+version = "0.2.0"
 description = "精简版剪贴板工具：记录历史 + 类型识别 + 底部面板"
 edition = "2021"
 license = "MIT"

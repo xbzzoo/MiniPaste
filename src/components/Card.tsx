@@ -1,5 +1,5 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { CSSProperties, MouseEvent } from "react";
+import type { CSSProperties, MouseEvent, ReactNode } from "react";
 import type { Item } from "../api";
 import { relativeTime, TYPE_LABEL, type TypeKey, typeKey } from "../itemType";
 import { TypeIcon } from "./TypeIcon";
@@ -11,6 +11,8 @@ const SHORT_TEXT_LINES = 3;
 
 interface CardProps {
   item: Item;
+  /** 搜索词，在内容里标出来；不搜索时为空数组 */
+  terms: string[];
   selected: boolean;
   onSelect: () => void;
   onPaste: () => void;
@@ -20,7 +22,7 @@ interface CardProps {
 }
 
 export function Card(props: CardProps) {
-  const { item, selected, onSelect, onPaste, onDelete, style } = props;
+  const { item, terms, selected, onSelect, onPaste, onDelete, style } = props;
   const type = typeKey(item);
 
   const handleDelete = (event: MouseEvent) => {
@@ -52,7 +54,7 @@ export function Card(props: CardProps) {
       </div>
 
       <div className="card-body">
-        <CardBody item={item} type={type} />
+        <CardBody item={item} type={type} terms={terms} />
       </div>
 
       <div className="card-foot">{describe(item)}</div>
@@ -60,8 +62,9 @@ export function Card(props: CardProps) {
   );
 }
 
-function CardBody(props: { item: Item; type: TypeKey }) {
-  const { item, type } = props;
+function CardBody(props: { item: Item; type: TypeKey; terms: string[] }) {
+  const { item, type, terms } = props;
+  const mark = (text: string) => highlight(text, terms);
 
   switch (type) {
     case "image":
@@ -84,7 +87,7 @@ function CardBody(props: { item: Item; type: TypeKey }) {
           {paths.slice(0, MAX_FILES_SHOWN).map((path) => (
             <li key={path} title={path}>
               <TypeIcon type="files" />
-              <span>{basename(path)}</span>
+              <span>{mark(basename(path))}</span>
             </li>
           ))}
           {rest > 0 ? <li className="card-files-more">还有 {rest} 项</li> : null}
@@ -98,7 +101,7 @@ function CardBody(props: { item: Item; type: TypeKey }) {
       return (
         <div className="card-color">
           <div className="card-swatch" style={{ background: value }} />
-          <code>{value}</code>
+          <code>{mark(value)}</code>
         </div>
       );
     }
@@ -107,8 +110,8 @@ function CardBody(props: { item: Item; type: TypeKey }) {
       const value = item.preview.trim();
       return (
         <div className="card-url">
-          <strong>{hostname(value)}</strong>
-          <span>{value}</span>
+          <strong>{mark(hostname(value))}</strong>
+          <span>{mark(value)}</span>
         </div>
       );
     }
@@ -116,10 +119,23 @@ function CardBody(props: { item: Item; type: TypeKey }) {
     default:
       return (
         <p className={`card-text${isShortText(item) ? " short" : ""}`}>
-          {item.preview}
+          {mark(item.preview)}
         </p>
       );
   }
+}
+
+/** 把 text 里的搜索词包上 <mark> */
+function highlight(text: string, terms: string[]): ReactNode {
+  if (terms.length === 0) return text;
+  // 长词优先，免得 "git" 先吃掉 "github" 的前半截；捕获组让 split 保留命中的部分
+  const pattern = [...terms]
+    .sort((a, b) => b.length - a.length)
+    .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+  return text
+    .split(new RegExp(`(${pattern})`, "i"))
+    .map((part, i) => (i % 2 === 1 ? <mark key={i}>{part}</mark> : part));
 }
 
 /** 长段落居中会很难读，只有短内容才居中 */

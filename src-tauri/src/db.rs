@@ -12,6 +12,8 @@
 //! - 列表要的东西（预览、字数、大小）入库时算好放在前面的小字段里，长文本和富文本原文放在最后两列，
 //!   列表查询碰不到它们的溢出页；
 //! - 一个覆盖索引包住时间、类型和大小：各类型计数、清理预估、空间统计都只扫索引，不回表。
+//!
+//! 搜索不建全文索引，见 [`Search`]。
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -19,7 +21,8 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use rusqlite::{params, Connection, OptionalExtension, Row};
+use rusqlite::types::Value;
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
@@ -27,6 +30,11 @@ const DB_FILE: &str = "history.db";
 const IMAGES_DIR: &str = "images";
 /// 列表里文本只回传前 N 个字符，长文本不必整段过 IPC。
 const PREVIEW_CHARS: usize = 400;
+/// 搜索时，命中处在前这么多行、这么多字以内，卡片上本来就看得到，预览不用变。
+const VISIBLE_LINES: usize = 6;
+const VISIBLE_CHARS: usize = 120;
+/// 命中处靠后时预览从命中处附近开始，往前最多带这么多个字（不跨行）。
+const SNIPPET_LEAD: usize = 20;
 
 /// 存在 `PRAGMA user_version` 里。v1 是最初的版本（大字段在中间、没有预览/大小列）。
 const SCHEMA_VERSION: i64 = 2;
@@ -226,6 +234,76 @@ pub struct Cursor {
     pub id: String,
 }
 
+/// 搜索条件：按空白拆成几个词，每个词都要在内容里出现（不分先后）。
+///
+/// 不建全文索引，直接 LIKE：最多一万条，扫一遍也就几毫秒；FTS5 的 trigram 分词又搜不了
+/// 两个字以内的词，中文最常搜的二字词恰好落在这里。LIKE 只对 ASCII 不分大小写，中文按原样匹配。
+/// 图片没有可搜的文字，搜索时不出现。
+#[derive(Debug, Clone)]
+pub struct Search {
+    /// 转成 ASCII 小写的词。LIKE 本来就不分 ASCII 大小写，小写版用来在原文里定位命中处。
+    terms: Vec<String>,
+}
+
+impl Search {
+    /// 全是空白时返回 None，等于不搜。
+    pub fn parse(query: &str) -> Option<Self> {
+        let terms: Vec<String> = query
+            .split_whitespace()
+            .map(str::to_ascii_lowercase)
+            .collect();
+        (!terms.is_empty()).then_some(Self { terms })
+    }
+
+    /// WHERE 片段，占位符按顺序绑定 [`Search::patterns`]。
+    fn condition(&self) -> String {
+        let mut sql = String::from("kind <> 'image'");
+        for _ in &self.terms {
+            sql.push_str(r" AND content LIKE ? ESCAPE '\'");
+        }
+        sql
+    }
+
+    fn patterns(&self) -> impl Iterator<Item = Value> + '_ {
+        self.terms.iter().map(|term| {
+            let escaped = term
+                .replace('\\', r"\\")
+                .replace('%', r"\%")
+                .replace('_', r"\_");
+            Value::Text(format!("%{escaped}%"))
+        })
+    }
+
+    /// 长文本的命中处可能在预览之外，卡片上就看不出为什么搜到它。命中处靠后时，
+    /// 换成从命中处所在行开始（最多往前带 [`SNIPPET_LEAD`] 个字）的一段，前面加「…」。
+    fn snippet(&self, content: &str) -> Option<String> {
+        // ASCII 转小写不改变字节位置，找到的下标在原文里同样适用
+        let lower = content.to_ascii_lowercase();
+        let pos = self
+            .terms
+            .iter()
+            .filter_map(|term| lower.find(term.as_str()))
+            .min()?;
+        let before = &content[..pos];
+        if before.matches('\n').count() < VISIBLE_LINES
+            && before.chars().count() < VISIBLE_CHARS
+        {
+            return None;
+        }
+        let line_start = before.rfind('\n').map_or(0, |i| i + 1);
+        let lead_start = before
+            .char_indices()
+            .rev()
+            .nth(SNIPPET_LEAD - 1)
+            .map_or(0, |(i, _)| i);
+        let rest: String = content[line_start.max(lead_start)..]
+            .chars()
+            .take(PREVIEW_CHARS)
+            .collect();
+        Some(format!("…{rest}"))
+    }
+}
+
 /// 占用空间：数据库文件 + 图片文件。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Usage {
@@ -333,50 +411,68 @@ impl Db {
         Ok(())
     }
 
-    /// 一页列表：`since` 之后、命中 `filter`、排在 `after` 之后的最多 `limit` 条，最近的在前。
+    /// 一页列表：`since` 之后、命中 `filter` 和 `search`、排在 `after` 之后的最多 `limit` 条，最近的在前。
     pub fn list(
         &self,
         since: i64,
         filter: Filter,
+        search: Option<&Search>,
         after: Option<&Cursor>,
         limit: u32,
     ) -> anyhow::Result<Vec<ItemView>> {
-        let conn = self.conn();
-        let sql = format!(
-            "SELECT id, kind, sub_kind, preview, char_count, width, height, updated_at
-             FROM items
-             WHERE updated_at >= ?1 AND ({}) {}
-             ORDER BY updated_at DESC, id DESC
-             LIMIT ?2",
-            filter.condition(),
-            if after.is_some() {
-                "AND (updated_at, id) < (?3, ?4)"
-            } else {
-                ""
-            },
+        let mut sql = String::from(
+            "SELECT id, kind, sub_kind, preview, char_count, width, height, updated_at",
         );
+        if search.is_some() {
+            // 搜索时要从原文里截命中处附近的一段做预览（这些行 LIKE 时已经读过，不多花 IO）。
+            // 链接和颜色卡片要把预览当完整的值解析（取域名、当背景色），不能截
+            sql.push_str(
+                ", CASE WHEN kind = 'text' AND ifnull(sub_kind, '') NOT IN ('url', 'color')
+                        THEN content END",
+            );
+        }
+        sql.push_str(&format!(
+            " FROM items WHERE updated_at >= ? AND ({})",
+            filter.condition()
+        ));
+        let mut args = vec![Value::from(since)];
+        if let Some(search) = search {
+            sql.push_str(" AND ");
+            sql.push_str(&search.condition());
+            args.extend(search.patterns());
+        }
+        if let Some(c) = after {
+            sql.push_str(" AND (updated_at, id) < (?, ?)");
+            args.extend([Value::from(c.updated_at), Value::from(c.id.clone())]);
+        }
+        sql.push_str(" ORDER BY updated_at DESC, id DESC LIMIT ?");
+        args.push(Value::from(limit));
+
+        let conn = self.conn();
         let mut stmt = conn.prepare_cached(&sql)?;
-        let to_view = |r: &Row| self.item_view(r);
-        let items = match after {
-            Some(c) => stmt
-                .query_map(params![since, limit, c.updated_at, c.id], to_view)?
-                .collect::<Result<_, _>>()?,
-            None => stmt
-                .query_map(params![since, limit], to_view)?
-                .collect::<Result<_, _>>()?,
-        };
+        let items = stmt
+            .query_map(params_from_iter(args), |r| self.item_view(r, search))?
+            .collect::<Result<_, _>>()?;
         Ok(items)
     }
 
-    fn item_view(&self, r: &Row) -> rusqlite::Result<ItemView> {
+    fn item_view(&self, r: &Row, search: Option<&Search>) -> rusqlite::Result<ItemView> {
         let kind: String = r.get(1)?;
-        let preview: String = r.get(3)?;
+        let mut preview: String = r.get(3)?;
         let image_path = (kind == "image").then(|| {
             self.images_dir
                 .join(&preview)
                 .to_string_lossy()
                 .into_owned()
         });
+        if let Some(search) = search {
+            if let Some(snippet) = r
+                .get::<_, Option<String>>(8)?
+                .and_then(|content| search.snippet(&content))
+            {
+                preview = snippet;
+            }
+        }
         Ok(ItemView {
             id: r.get(0)?,
             kind,
@@ -390,18 +486,29 @@ impl Db {
         })
     }
 
-    /// `since` 之后每个筛选类型各有多少条，一次扫描（只扫索引）全部算出。
-    pub fn counts(&self, since: i64) -> anyhow::Result<BTreeMap<&'static str, i64>> {
+    /// `since` 之后（命中 `search` 的）每个筛选类型各有多少条，一次扫描全部算出。
+    /// 不搜索时只扫索引；搜索时要读原文，等于扫一遍表。
+    pub fn counts(
+        &self,
+        since: i64,
+        search: Option<&Search>,
+    ) -> anyhow::Result<BTreeMap<&'static str, i64>> {
         let sums: Vec<String> = Filter::ALL
             .iter()
             .map(|f| format!("ifnull(sum({}), 0)", f.condition()))
             .collect();
-        let sql = format!(
-            "SELECT {} FROM items WHERE updated_at >= ?1",
+        let mut sql = format!(
+            "SELECT {} FROM items WHERE updated_at >= ?",
             sums.join(", ")
         );
+        let mut args = vec![Value::from(since)];
+        if let Some(search) = search {
+            sql.push_str(" AND ");
+            sql.push_str(&search.condition());
+            args.extend(search.patterns());
+        }
         let conn = self.conn();
-        let values = conn.prepare_cached(&sql)?.query_row([since], |r| {
+        let values = conn.prepare_cached(&sql)?.query_row(params_from_iter(args), |r| {
             (0..Filter::ALL.len())
                 .map(|i| r.get::<_, i64>(i))
                 .collect::<Result<Vec<_>, _>>()
@@ -618,7 +725,7 @@ mod tests {
     }
 
     fn all(db: &Db) -> Vec<String> {
-        previews(db.list(0, Filter::All, None, 1000).unwrap())
+        previews(db.list(0, Filter::All, None, None, 1000).unwrap())
     }
 
     #[test]
@@ -645,7 +752,7 @@ mod tests {
     fn delete_removes_row_and_image_files() {
         let db = memory_db();
         db.upsert_at(&image(&db, "abc", true), 10, 1).unwrap();
-        let item = db.list(0, Filter::All, None, 10).unwrap().remove(0);
+        let item = db.list(0, Filter::All, None, None, 10).unwrap().remove(0);
         assert!(item.image_path.unwrap().ends_with("abc.thumb.png"));
 
         db.delete(&item.id).unwrap();
@@ -659,7 +766,7 @@ mod tests {
     fn preview_is_truncated_but_char_count_is_full() {
         let db = memory_db();
         db.upsert_at(&text(&"字".repeat(1000)), 10, 1).unwrap();
-        let item = db.list(0, Filter::All, None, 10).unwrap().remove(0);
+        let item = db.list(0, Filter::All, None, None, 10).unwrap().remove(0);
 
         assert_eq!(item.preview.chars().count(), PREVIEW_CHARS);
         assert_eq!(item.char_count, 1000);
@@ -684,7 +791,7 @@ mod tests {
         let mut seen = Vec::new();
         let mut cursor: Option<Cursor> = None;
         loop {
-            let page = db.list(0, Filter::All, cursor.as_ref(), 2).unwrap();
+            let page = db.list(0, Filter::All, None, cursor.as_ref(), 2).unwrap();
             let Some(last) = page.last() else { break };
             cursor = Some(Cursor {
                 updated_at: last.updated_at,
@@ -718,7 +825,7 @@ mod tests {
         )
         .unwrap();
 
-        let counts = db.counts(15).unwrap();
+        let counts = db.counts(15, None).unwrap();
         assert_eq!(counts["all"], 5);
         assert_eq!(counts["text"], 1, "email 算文本，url / color 不算");
         assert_eq!(counts["url"], 1);
@@ -727,17 +834,135 @@ mod tests {
         assert_eq!(counts["files"], 1);
 
         assert_eq!(
-            previews(db.list(15, Filter::Text, None, 10).unwrap()),
+            previews(db.list(15, Filter::Text, None, None, 10).unwrap()),
             ["a@b.com"]
         );
         assert_eq!(
-            previews(db.list(0, Filter::Text, None, 10).unwrap()),
+            previews(db.list(0, Filter::Text, None, None, 10).unwrap()),
             ["a@b.com", "old note"]
         );
-        assert_eq!(db.counts(1000).unwrap()["all"], 0);
+        assert_eq!(db.counts(1000, None).unwrap()["all"], 0);
 
-        let files = db.list(0, Filter::Files, None, 10).unwrap().remove(0);
+        let files = db.list(0, Filter::Files, None, None, 10).unwrap().remove(0);
         assert_eq!(files.char_count, 2);
+    }
+
+    fn search(db: &Db, filter: Filter, query: &str) -> Vec<String> {
+        let search = Search::parse(query);
+        previews(db.list(0, filter, search.as_ref(), None, 100).unwrap())
+    }
+
+    #[test]
+    fn search_needs_every_term_and_ignores_ascii_case() {
+        let db = memory_db();
+        db.upsert_at(&text("Hello World"), 100, 1).unwrap();
+        db.upsert_at(&text("hello there"), 100, 2).unwrap();
+        db.upsert_at(&text("世界和平"), 100, 3).unwrap();
+        db.upsert_at(&with_sub("https://GitHub.com/rust", "url"), 100, 4)
+            .unwrap();
+        db.upsert_at(
+            &NewItem::files(&["/Users/a/Report.pdf".into()], "files:r".into()),
+            100,
+            5,
+        )
+        .unwrap();
+        db.upsert_at(&image(&db, "hello", false), 100, 6).unwrap();
+
+        assert_eq!(
+            search(&db, Filter::All, "HELLO"),
+            ["hello there", "Hello World"],
+            "图片的文件名里有 hello 也不算"
+        );
+        assert_eq!(search(&db, Filter::All, "  world   hello "), ["Hello World"]);
+        assert_eq!(search(&db, Filter::All, "世界"), ["世界和平"]);
+        assert_eq!(search(&db, Filter::All, "github"), ["https://GitHub.com/rust"]);
+        assert_eq!(search(&db, Filter::All, "report"), ["/Users/a/Report.pdf"]);
+        assert_eq!(search(&db, Filter::Text, "github"), Vec::<String>::new());
+        assert!(Search::parse(" \t\n").is_none());
+
+        let counts = db.counts(0, Search::parse("o").as_ref()).unwrap();
+        assert_eq!(counts["all"], 4);
+        assert_eq!(counts["text"], 2);
+        assert_eq!(counts["url"], 1);
+        assert_eq!(counts["files"], 1);
+        assert_eq!(counts["image"], 0);
+    }
+
+    #[test]
+    fn search_treats_like_wildcards_literally() {
+        let db = memory_db();
+        for s in ["100%", "1000", "a_b", "axb", r"C:\dir", "C:dir"] {
+            db.upsert_at(&text(s), 100, 1).unwrap();
+        }
+
+        assert_eq!(search(&db, Filter::All, "0%"), ["100%"]);
+        assert_eq!(search(&db, Filter::All, "a_b"), ["a_b"]);
+        assert_eq!(search(&db, Filter::All, r":\d"), [r"C:\dir"]);
+    }
+
+    #[test]
+    fn search_respects_since_and_pages_with_cursor() {
+        let db = memory_db();
+        for t in 1..=5 {
+            db.upsert_at(&text(&format!("note {t}")), 100, t).unwrap();
+        }
+        db.upsert_at(&text("other"), 100, 6).unwrap();
+        let s = Search::parse("note");
+
+        let first = db.list(0, Filter::All, s.as_ref(), None, 2).unwrap();
+        let last = first.last().unwrap();
+        let cursor = Cursor {
+            updated_at: last.updated_at,
+            id: last.id.clone(),
+        };
+        let second = db
+            .list(0, Filter::All, s.as_ref(), Some(&cursor), 10)
+            .unwrap();
+        assert_eq!(previews(first), ["note 5", "note 4"]);
+        assert_eq!(previews(second), ["note 3", "note 2", "note 1"]);
+
+        assert_eq!(
+            previews(db.list(4, Filter::All, s.as_ref(), None, 10).unwrap()),
+            ["note 5", "note 4"]
+        );
+        assert_eq!(db.counts(4, s.as_ref()).unwrap()["all"], 2);
+    }
+
+    #[test]
+    fn search_preview_jumps_to_late_match() {
+        let db = memory_db();
+        let early = format!("needle 在开头{}", "。".repeat(1000));
+        let late_lines = format!("{}第七行有 Needle 和后文", "一行\n".repeat(7));
+        let late_long = format!("{}needle 在很后面", "字".repeat(2000));
+        for s in [&early, &late_lines, &late_long] {
+            db.upsert_at(&text(s), 100, 1).unwrap();
+        }
+        let long_url = format!("https://a.com/?q={}&needle=1", "x".repeat(300));
+        db.upsert_at(&with_sub(&long_url, "url"), 100, 1).unwrap();
+        let find = |prefix: &str| {
+            search(&db, Filter::All, "NEEDLE")
+                .into_iter()
+                .find(|p| p.contains(prefix))
+                .unwrap()
+        };
+
+        let p = find("在开头");
+        assert!(p.starts_with("needle"), "命中在前面，预览不变");
+        assert_eq!(p.chars().count(), PREVIEW_CHARS);
+
+        assert_eq!(find("第七行"), "…第七行有 Needle 和后文", "从命中所在行开始");
+
+        let p = find("很后面");
+        assert_eq!(
+            p,
+            format!("…{}needle 在很后面", "字".repeat(SNIPPET_LEAD)),
+            "同一行里往前最多带 SNIPPET_LEAD 个字"
+        );
+
+        assert!(find("a.com").starts_with("https://"), "链接不截，卡片要解析域名");
+
+        let plain = previews(db.list(0, Filter::All, None, None, 10).unwrap());
+        assert!(plain.iter().all(|p| !p.starts_with('…')), "不搜索时预览不变");
     }
 
     #[test]
@@ -800,6 +1025,18 @@ mod tests {
             "不应额外排序: {page_plan}"
         );
 
+        // 搜索时仍按索引顺序走，凑够一页就停，不会把命中的行全取出来再排序
+        let search_plan = plan(&format!(
+            "SELECT id FROM items WHERE updated_at >= 0 AND {}
+             ORDER BY updated_at DESC, id DESC LIMIT 60",
+            Search::parse("a b").unwrap().condition().replace('?', "'%a%'")
+        ));
+        assert!(search_plan.contains("idx_items_recent"), "{search_plan}");
+        assert!(
+            !search_plan.contains("TEMP B-TREE"),
+            "不应额外排序: {search_plan}"
+        );
+
         let usage_plan = plan("SELECT count(*), sum(bytes) FROM items WHERE kind = 'image'");
         assert!(usage_plan.contains("COVERING INDEX"), "{usage_plan}");
     }
@@ -839,7 +1076,7 @@ mod tests {
 
         let db = Db::with_connection(conn, dir, None).unwrap();
 
-        let items = db.list(0, Filter::All, None, 10).unwrap();
+        let items = db.list(0, Filter::All, None, None, 10).unwrap();
         assert_eq!(items.len(), 3);
         assert!(items[0].image_path.as_ref().unwrap().ends_with("pic.png"));
         assert_eq!(items[1].char_count, 3);

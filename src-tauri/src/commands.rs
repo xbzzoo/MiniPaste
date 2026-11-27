@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 use crate::clipboard::{self, UPDATED_EVENT};
 use crate::config::{Period, Settings};
-use crate::db::{now_ms, Cursor, Db, Filter, ItemView};
+use crate::db::{now_ms, Cursor, Db, Filter, ItemView, Search};
 use crate::{menu, native, panel, paste, shortcut};
 
 type CmdResult<T> = Result<T, String>;
@@ -23,22 +23,30 @@ fn to_msg(err: anyhow::Error) -> String {
     format!("{err:#}")
 }
 
-fn since(app: &AppHandle) -> i64 {
-    app.state::<Settings>().get().period.since(now_ms())
+/// 列表的起始时间。搜索时不受显示范围限制：显示范围是为了平时少翻几屏，搜索是为了把以前的找回来。
+fn since(period: Period, search: Option<&Search>) -> i64 {
+    match search {
+        Some(_) => 0,
+        None => period.since(now_ms()),
+    }
 }
 
-/// 当前显示范围内的一页记录。`cursor` 为上一页最后一条，首页传 null。
+/// 一页记录。`query` 为搜索框里的文字（空串即不搜），`cursor` 为上一页最后一条，首页传 null。
 #[tauri::command]
 pub async fn list_items(
     app: AppHandle,
     filter: Filter,
+    query: String,
     cursor: Option<Cursor>,
     limit: u32,
 ) -> CmdResult<Vec<ItemView>> {
+    let search = Search::parse(&query);
+    let period = app.state::<Settings>().get().period;
     app.state::<Db>()
         .list(
-            since(&app),
+            since(period, search.as_ref()),
             filter,
+            search.as_ref(),
             cursor.as_ref(),
             limit.clamp(1, MAX_PAGE),
         )
@@ -51,13 +59,14 @@ pub struct Overview {
     counts: BTreeMap<&'static str, i64>,
 }
 
-/// 当前显示范围，以及范围内每个类型的条数。
+/// 当前显示范围，以及范围内（搜索时为全部记录中命中的）每个类型的条数。
 #[tauri::command]
-pub async fn get_overview(app: AppHandle) -> CmdResult<Overview> {
+pub async fn get_overview(app: AppHandle, query: String) -> CmdResult<Overview> {
+    let search = Search::parse(&query);
     let period = app.state::<Settings>().get().period;
     let counts = app
         .state::<Db>()
-        .counts(period.since(now_ms()))
+        .counts(since(period, search.as_ref()), search.as_ref())
         .map_err(to_msg)?;
     Ok(Overview { period, counts })
 }

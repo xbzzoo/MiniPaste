@@ -8,6 +8,7 @@
   --accent: #5b6cff;
   --danger: #e5484d;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 4px 12px rgba(0, 0, 0, 0.06);
+  --mark: rgba(255, 204, 0, 0.45);
 
   /* 每种类型一个识别色 */
   --c-text: #64748b;
@@ -37,6 +38,7 @@
     --accent: #7c8aff;
     --danger: #ff6369;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 12px rgba(0, 0, 0, 0.25);
+    --mark: rgba(255, 204, 0, 0.32);
   }
 }
 
@@ -87,9 +89,74 @@ button {
   padding: 12px 20px 10px;
 }
 
+.toolbar-start {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .filters {
   display: flex;
   gap: 6px;
+}
+
+/* 搜索框：面板弹出时就有光标，直接打字即搜 */
+.search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 220px;
+  height: 28px;
+  padding: 0 5px 0 10px;
+  border-radius: 14px;
+  background: var(--chip-bg);
+  color: var(--text-secondary);
+  transition: box-shadow 0.15s;
+}
+
+.search.filled {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: text;
+  /* body 禁了选择；WebKit 里继承下来会让输入框打不了字 */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.search input::placeholder {
+  color: var(--text-secondary);
+}
+
+.search-clear {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 18px;
+}
+
+.search-clear:hover {
+  background: var(--chip-bg);
+  color: var(--text);
+}
+
+mark {
+  border-radius: 2px;
+  background: var(--mark);
+  color: inherit;
 }
 
 .chip {
@@ -148,10 +215,13 @@ button {
   height: 16px;
 }
 
+/* 屏幕窄时宁可截掉提示，也不能把右边的菜单按钮挤出去 */
 .hints {
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-secondary);
   font-size: 12px;
   white-space: nowrap;
